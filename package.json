@@ -1,0 +1,18 @@
+{
+  "name": "kickz-be",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "BinhLT",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.4",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.14"
+  }
+}
