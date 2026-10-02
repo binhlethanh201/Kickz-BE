@@ -4,6 +4,7 @@ const schema = mongoose.Schema;
 const OrderSchema = new schema(
   {
     userId: { type: schema.Types.ObjectId, ref: "User", required: true },
+    orderCode: { type: Number },
     items: [
       {
         productId: {
@@ -24,10 +25,9 @@ const OrderSchema = new schema(
     address: { type: String, required: true },
     paymentMethod: {
       type: String,
-      enum: ["qrcode", "cod"],
+      enum: ["payos", "cod"],
       default: "cod",
     },
-    cardId: { type: schema.Types.ObjectId, ref: "Card" },
     voucherCode: { type: String },
     discount: { type: Number, default: 0 },
     totalPrice: { type: Number, required: true },

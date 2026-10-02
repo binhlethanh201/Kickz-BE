@@ -10,6 +10,7 @@ const voucherRouter = require("./voucher");
 const reviewRouter = require("./review");
 const authRouter = require("./auth");
 const adminRouter = require("./admin");
+const orderRouter = require("./order");
 
 router.use("/products", productRouter);
 router.use("/brands", brandRouter);
@@ -21,5 +22,6 @@ router.use("/vouchers", voucherRouter);
 router.use("/reviews", reviewRouter);
 router.use("/auth", authRouter);
 router.use("/admin", adminRouter);
+router.use("/orders", orderRouter);
 
 module.exports = router;
