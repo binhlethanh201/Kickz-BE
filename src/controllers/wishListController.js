@@ -1,4 +1,5 @@
 const Wishlist = require("../models/WishList");
+const Cart = require("../models/Cart");
 
 class WishlistController {
   async getAll(req, res) {
@@ -99,6 +100,68 @@ class WishlistController {
       res
         .status(500)
         .json({ message: "Error removing from wishlist", error: err.message });
+    }
+  }
+
+  async moveToCart(req, res) {
+    try {
+      const userId = req.user.id;
+      // Yêu cầu Frontend phải gửi đủ thông tin size, color, quantity (mặc định là 1)
+      const { productId, size, color, quantity = 1 } = req.body;
+
+      if (!productId || !size || !color) {
+        return res.status(400).json({
+          message:
+            "Vui lòng cung cấp đủ productId, size và color để thêm vào giỏ hàng",
+        });
+      }
+
+      // 1. Kiểm tra xem sản phẩm có trong Wishlist không
+      const wishlist = await Wishlist.findOne({ userId });
+      if (!wishlist || !wishlist.products.includes(productId)) {
+        return res
+          .status(404)
+          .json({ message: "Sản phẩm không tồn tại trong Wishlist" });
+      }
+
+      // 2. Thêm sản phẩm vào Cart (Logic tương tự addToCart)
+      let cart = await Cart.findOne({ userId });
+      if (!cart) {
+        cart = new Cart({ userId, items: [] });
+      }
+
+      const existingItem = cart.items.find(
+        (item) =>
+          item.productId.toString() === productId &&
+          item.size === size &&
+          item.color === color,
+      );
+
+      if (existingItem) {
+        existingItem.quantity += quantity;
+      } else {
+        cart.items.push({ productId, quantity, size, color });
+      }
+
+      await cart.save(); // Lưu giỏ hàng
+
+      // 3. Xóa sản phẩm khỏi Wishlist
+      wishlist.products = wishlist.products.filter(
+        (p) => p.toString() !== productId,
+      );
+
+      await wishlist.save(); // Lưu lại wishlist
+
+      res.status(200).json({
+        message: "Chuyển sản phẩm vào giỏ hàng thành công",
+        cart,
+        wishlist: wishlist.products, // Trả về danh sách wishlist mới cho Frontend cập nhật UI
+      });
+    } catch (err) {
+      console.error("Move to cart error:", err);
+      res
+        .status(500)
+        .json({ message: "Lỗi khi chuyển sang giỏ hàng", error: err.message });
     }
   }
 }
