@@ -3,7 +3,9 @@ const Cart = require("../models/Cart");
 const Voucher = require("../models/Voucher");
 const Product = require("../models/Product");
 const mongoose = require("mongoose");
-const PayOS = require("@payos/node");
+
+const PayOSModule = require("@payos/node");
+const PayOS = PayOSModule.PayOS || PayOSModule.default || PayOSModule;
 
 // Khởi tạo PayOS
 const payos = new PayOS(
@@ -361,12 +363,10 @@ class OrderController {
       if (err.name === "CastError") {
         return res.status(400).json({ message: "Invalid order ID format" });
       }
-      res
-        .status(500)
-        .json({
-          message: "Server error while deleting order",
-          error: err.message,
-        });
+      res.status(500).json({
+        message: "Server error while deleting order",
+        error: err.message,
+      });
     }
   }
 }

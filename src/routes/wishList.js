@@ -4,7 +4,7 @@ const wishlistController = require("../controllers/wishListController");
 const verifyToken = require("../middlewares/auth");
 
 router.get("/", wishlistController.getAll);
-router.post("/move-to-cart", wishListController.moveToCart);
+router.post("/move-to-cart", wishlistController.moveToCart);
 router.get("/user/:userId", verifyToken, wishlistController.getByUser);
 router.post("/", verifyToken, wishlistController.addToWishlist);
 router.delete(
