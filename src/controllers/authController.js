@@ -94,6 +94,41 @@ class AuthController {
       res.status(500).json({ message: "Server error", error: error.message });
     }
   }
+
+  async getMe(req, res) {
+    try {
+      const user = await User.findById(req.user.id).select("-password");
+      if (!user) {
+        return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      }
+      res.status(200).json({ user });
+    } catch (error) {
+      res.status(500).json({ message: "Lỗi server", error: error.message });
+    }
+  }
+
+  async changePassword(req, res) {
+    try {
+      const { oldPassword, newPassword } = req.body;
+      const user = await User.findById(req.user.id);
+
+      if (!user) {
+        return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      }
+
+      const isMatch = await bcrypt.compare(oldPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ message: "Mật khẩu cũ không chính xác" });
+      }
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      user.password = hashedNewPassword;
+      await user.save();
+
+      res.status(200).json({ message: "Đổi mật khẩu thành công" });
+    } catch (error) {
+      res.status(500).json({ message: "Lỗi server", error: error.message });
+    }
+  }
 }
 
 module.exports = new AuthController();
