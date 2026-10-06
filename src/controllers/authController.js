@@ -129,6 +129,34 @@ class AuthController {
       res.status(500).json({ message: "Lỗi server", error: error.message });
     }
   }
+
+  async updateMe(req, res) {
+    try {
+      const updates = { ...req.body };
+      if (updates.gender === "") delete updates.gender;
+      if (updates.phone === "") updates.phone = undefined;
+      if (updates.address === "") updates.address = undefined;
+      delete updates.email;
+      delete updates.password;
+      const user = await User.findByIdAndUpdate(
+        req.user.id,
+        { $set: updates },
+        { new: true, runValidators: true },
+      ).select("-password");
+
+      if (!user) {
+        return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      }
+
+      res.status(200).json({
+        message: "Cập nhật thông tin thành công",
+        user,
+      });
+    } catch (error) {
+      console.error("Lỗi khi updateMe:", error);
+      res.status(500).json({ message: "Lỗi lưu dữ liệu: " + error.message });
+    }
+  }
 }
 
 module.exports = new AuthController();

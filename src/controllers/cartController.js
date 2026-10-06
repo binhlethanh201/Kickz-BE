@@ -54,17 +54,24 @@ class CartController {
       if (!cart) {
         cart = new Cart({ userId, items: [] });
       }
+
       const existingItem = cart.items.find(
         (item) =>
-          item.productId.toString() === productId &&
-          item.size === size &&
+          item.productId.toString() === productId.toString() &&
+          item.size == size &&
           item.color === color,
       );
 
       if (existingItem) {
-        existingItem.quantity += quantity;
+        existingItem.quantity =
+          Number(existingItem.quantity) + Number(quantity);
       } else {
-        cart.items.push({ productId, quantity, size, color });
+        cart.items.push({
+          productId,
+          quantity: Number(quantity),
+          size: Number(size) || null,
+          color,
+        });
       }
 
       await cart.save();

@@ -4,15 +4,13 @@ const Voucher = require("../models/Voucher");
 const Product = require("../models/Product");
 const mongoose = require("mongoose");
 
-const PayOSModule = require("@payos/node");
-const PayOS = PayOSModule.PayOS || PayOSModule.default || PayOSModule;
+const { PayOS } = require("@payos/node");
 
-// Khởi tạo PayOS
-const payos = new PayOS(
-  process.env.PAYOS_CLIENT_ID,
-  process.env.PAYOS_API_KEY,
-  process.env.PAYOS_CHECKSUM_KEY,
-);
+const payos = new PayOS({
+  clientId: process.env.PAYOS_CLIENT_ID,
+  apiKey: process.env.PAYOS_API_KEY,
+  checksumKey: process.env.PAYOS_CHECKSUM_KEY,
+});
 
 class OrderController {
   async getAll(req, res) {
@@ -62,6 +60,20 @@ class OrderController {
       if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
+
+      if (order.paymentMethod === "payos" && order.status === "pending") {
+        try {
+          const paymentInfo = await payos.getPaymentLinkInformation(
+            order.orderCode,
+          );
+          if (paymentInfo && paymentInfo.status === "PAID") {
+            order.status = "paid";
+            await order.save();
+          }
+        } catch (payosErr) {
+          console.error("PayOS Sync Error:", payosErr.message);
+        }
+      }
       res.status(200).json({ message: "Get order detail successfully", order });
     } catch (err) {
       if (err.name === "CastError") {
@@ -74,9 +86,6 @@ class OrderController {
   }
 
   createOrder = async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
       const userId = req.user.id;
       const {
@@ -91,9 +100,7 @@ class OrderController {
         throw new Error("No items selected for checkout");
       }
 
-      const cart = await Cart.findOne({ userId })
-        .session(session)
-        .populate("items.productId");
+      const cart = await Cart.findOne({ userId }).populate("items.productId");
       if (!cart) throw new Error("Cart not found");
 
       const orderItems = [];
@@ -110,11 +117,11 @@ class OrderController {
 
         if (!found)
           throw new Error(`Item ${item.productId} not found in cart.`);
-        const product = await Product.findById(found.productId._id).session(
-          session,
-        );
+
+        const product = await Product.findById(found.productId._id);
         if (!product)
           throw new Error(`Product ${found.productId.name} not found.`);
+
         if (product.quantity < found.quantity) {
           throw new Error(
             `Not enough stock for ${product.name}. Only ${product.quantity} left.`,
@@ -144,12 +151,12 @@ class OrderController {
           isActive: true,
           startDate: { $lte: new Date() },
           endDate: { $gte: new Date() },
-        }).session(session);
+        });
 
         if (!voucher) throw new Error("Invalid or expired voucher");
         if (totalPrice < voucher.minOrderValue) {
           throw new Error(
-            `Order must be at least $${voucher.minOrderValue} to use voucher`,
+            `Order must be at least ${voucher.minOrderValue} VNĐ to use voucher`,
           );
         }
         discount =
@@ -159,12 +166,11 @@ class OrderController {
         if (discount > totalPrice) discount = totalPrice;
       }
 
-      const shippingFee = shippingMethod === "express" ? 5 : 0;
+      const shippingFee = shippingMethod === "express" ? 20000 : 0;
       const finalPrice = totalPrice - discount + shippingFee;
 
-      // Sinh mã orderCode (số nguyên) bắt buộc cho PayOS
       const payosOrderCode = Number(String(Date.now()).slice(-9));
-      const initialStatus = "pending";
+      const initialStatus = paymentMethod === "payos" ? "paid" : "pending";
 
       const newOrder = new Order({
         userId,
@@ -180,10 +186,10 @@ class OrderController {
         status: initialStatus,
       });
 
-      await newOrder.save({ session });
+      await newOrder.save();
 
       if (stockUpdates.length > 0) {
-        await Product.bulkWrite(stockUpdates, { session });
+        await Product.bulkWrite(stockUpdates);
       }
 
       cart.items = cart.items.filter(
@@ -195,50 +201,91 @@ class OrderController {
               si.color === ci.color,
           ),
       );
-      await cart.save({ session });
+      await cart.save();
 
       let checkoutUrl = null;
 
-      // Xử lý tạo link thanh toán nếu chọn PayOS
       if (paymentMethod === "payos") {
+        const FRONTEND_URL =
+          process.env.FRONTEND_URL || "http://localhost:3000";
         const body = {
           orderCode: payosOrderCode,
-          amount: finalPrice, // Đảm bảo finalPrice tính bằng VNĐ
+          amount: Math.round(finalPrice),
           description: `Thanh toan don hang`,
-          returnUrl: process.env.PAYOS_RETURN_URL,
-          cancelUrl: process.env.PAYOS_CANCEL_URL,
+          returnUrl: `${FRONTEND_URL}/order/${newOrder._id}`,
+          cancelUrl: `${FRONTEND_URL}/order/${newOrder._id}`,
         };
 
-        const paymentLinkResponse = await payos.createPaymentLink(body);
+        const paymentLinkResponse = await payos.paymentRequests.create(body);
         checkoutUrl = paymentLinkResponse.checkoutUrl;
       }
 
-      await session.commitTransaction();
       res.status(201).json({
         message: "Order placed successfully",
         order: newOrder,
-        checkoutUrl: checkoutUrl, // Frontend dùng link này để mở trang quét QR
+        checkoutUrl: checkoutUrl,
       });
     } catch (err) {
-      await session.abortTransaction();
       console.error("Create order error:", err);
       res.status(400).json({ message: err.message || "Server error" });
-    } finally {
-      session.endSession();
     }
   };
 
-  // API nhận Webhook từ PayOS khi khách thanh toán thành công
+  async cancelOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user.id;
+
+      const order = await Order.findOne({ _id: orderId, userId });
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({ message: "Order not found or unauthorized" });
+      }
+
+      if (!["pending", "paid"].includes(order.status)) {
+        return res.status(400).json({
+          message: `Cannot cancel order with status "${order.status}". Only "pending" or "paid" orders can be cancelled.`,
+        });
+      }
+
+      const stockUpdates = order.items.map((item) => ({
+        updateOne: {
+          filter: { _id: item.productId },
+          update: { $inc: { quantity: item.quantity } },
+        },
+      }));
+
+      if (stockUpdates.length > 0) {
+        await Product.bulkWrite(stockUpdates);
+      }
+
+      const previousStatus = order.status;
+      order.status = "cancelled";
+      const updatedOrder = await order.save();
+
+      await updatedOrder.populate([
+        { path: "items.productId", select: "name price img brand" },
+      ]);
+
+      let message = "Order cancelled successfully";
+      if (previousStatus === "paid") {
+        message = "Order cancelled. Please contact admin for a refund.";
+      }
+
+      res.status(200).json({ message, order: updatedOrder });
+    } catch (err) {
+      res
+        .status(500)
+        .json({ message: "Server error cancelling order", error: err.message });
+    }
+  }
+
   payosWebhook = async (req, res) => {
     try {
-      // Xác thực dữ liệu gửi từ PayOS bằng Checksum Key
-      const webhookData = payos.verifyPaymentWebhookData(req.body);
-
-      // Nếu trạng thái thành công
-      if (
-        ["PAYMENT_SUCCESS", "00"].includes(webhookData.code) ||
-        webhookData.success === true
-      ) {
+      const webhookData = await payos.webhooks.verify(req.body);
+      if (["00", "PAYMENT_SUCCESS"].includes(webhookData.code)) {
         await Order.findOneAndUpdate(
           { orderCode: webhookData.orderCode },
           { status: "paid" },
@@ -269,71 +316,6 @@ class OrderController {
       res
         .status(500)
         .json({ message: "Error updating order", error: err.message });
-    }
-  }
-
-  async cancelOrder(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      const { orderId } = req.params;
-      const userId = req.user.id;
-
-      const order = await Order.findOne({ _id: orderId, userId }).session(
-        session,
-      );
-
-      if (!order) {
-        await session.abortTransaction();
-        return res
-          .status(404)
-          .json({ message: "Order not found or unauthorized" });
-      }
-
-      if (!["pending", "paid"].includes(order.status)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          message: `Cannot cancel order with status "${order.status}". Only "pending" or "paid" orders can be cancelled.`,
-        });
-      }
-
-      // Hoàn trả số lượng vào kho
-      const stockUpdates = order.items.map((item) => ({
-        updateOne: {
-          filter: { _id: item.productId },
-          update: { $inc: { quantity: item.quantity } },
-        },
-      }));
-
-      if (stockUpdates.length > 0) {
-        await Product.bulkWrite(stockUpdates, { session });
-      }
-
-      const previousStatus = order.status;
-      order.status = "cancelled";
-      const updatedOrder = await order.save({ session });
-
-      await session.commitTransaction();
-      await updatedOrder.populate([
-        { path: "items.productId", select: "name price img brand" },
-      ]);
-
-      let message = "Order cancelled successfully";
-      if (previousStatus === "paid") {
-        // Lưu ý: PayOS không tự động hoàn tiền qua API ở bản miễn phí,
-        // Admin cần check Dashboard và chuyển khoản hoàn tay, nên ở đây chỉ đổi trạng thái DB.
-        message = "Order cancelled. Please contact admin for a refund.";
-      }
-
-      res.status(200).json({ message, order: updatedOrder });
-    } catch (err) {
-      await session.abortTransaction();
-      res
-        .status(500)
-        .json({ message: "Server error cancelling order", error: err.message });
-    } finally {
-      session.endSession();
     }
   }
 
