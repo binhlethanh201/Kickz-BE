@@ -75,21 +75,36 @@ class AuthController {
   async login(req, res) {
     try {
       const { email, password } = req.body;
+
       const user = await User.findOne({ email });
       if (!user) {
         return res.status(400).json({ message: "Invalid email or password" });
       }
+
       const isPasswordValid = await bcrypt.compare(password, user.password);
       if (!isPasswordValid) {
         return res.status(400).json({ message: "Invalid email or password" });
       }
+
       const payload = {
         id: user._id,
         email: user.email,
         role: user.role,
       };
+
       const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "2h" });
-      res.status(200).json({ message: "Login successful", token });
+      const userResponse = {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+      };
+      res.status(200).json({
+        message: "Login successful",
+        token,
+        user: userResponse,
+      });
     } catch (error) {
       res.status(500).json({ message: "Server error", error: error.message });
     }

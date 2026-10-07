@@ -1,10 +1,24 @@
 const Review = require("../models/Review");
+const Order = require("../models/Order");
 
 class ReviewController {
   async createReview(req, res) {
     try {
       const { productId, rating, comment, images } = req.body;
       const userId = req.user.id;
+
+      const hasPurchased = await Order.findOne({
+        userId: userId,
+        "items.productId": productId,
+        status: { $in: ["paid", "processing", "shipped", "completed"] },
+      });
+
+      if (!hasPurchased) {
+        return res.status(403).json({
+          message:
+            "Bạn cần mua và thanh toán sản phẩm này mới có thể đánh giá.",
+        });
+      }
 
       const newReview = new Review({
         productId,
