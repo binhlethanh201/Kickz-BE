@@ -30,7 +30,7 @@ class CategoryController {
       const updatedCategory = await Category.findByIdAndUpdate(
         id,
         { $set: req.body },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       if (!updatedCategory) {
