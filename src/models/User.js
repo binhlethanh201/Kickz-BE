@@ -32,6 +32,10 @@ const UserSchema = new schema(
       enum: ["user", "admin", "owner", "staff"],
       default: "user",
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true },
 );

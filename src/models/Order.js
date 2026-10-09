@@ -43,6 +43,14 @@ const OrderSchema = new schema(
       ],
       default: "pending",
     },
+    paidAt: {
+      type: Date,
+      default: null,
+    },
+    note: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true },
 );

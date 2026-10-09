@@ -3,6 +3,7 @@ const router = express.Router();
 const AdminController = require("../controllers/adminController");
 const verifyToken = require("../middlewares/auth");
 const checkAdmin = require("../middlewares/admin");
+const adminController = require("../controllers/adminController");
 
 router.use(verifyToken, checkAdmin);
 //Report And Analytics
@@ -21,6 +22,11 @@ router.get("/orders", AdminController.getAllOrders);
 router.get("/orders/:id", AdminController.getOrderById);
 router.put("/orders/:id/status", AdminController.updateOrderStatus);
 router.delete("/orders/:id", AdminController.deleteOrder);
+router.patch(
+  "/orders/:orderId/confirm-payment",
+  adminController.confirmCODPayment,
+);
+
 //Vouchers Management
 router.get("/vouchers", AdminController.getAllVouchers);
 router.get("/vouchers/:id", AdminController.getVoucherById);

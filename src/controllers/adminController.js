@@ -8,7 +8,9 @@ class AdminController {
   //Users Management
   async getAllUsers(req, res) {
     try {
-      const users = await User.find().select("-password");
+      const users = await User.find({})
+        .select("-password")
+        .sort({ createdAt: -1 });
       res.status(200).json(users);
     } catch (error) {
       res.status(500).json({ message: error.message });
@@ -53,7 +55,9 @@ class AdminController {
       user.email = req.body.email || user.email;
       user.role = req.body.role || user.role;
       user.phone = req.body.phone || user.phone;
-
+      if (req.body.isActive !== undefined) {
+        user.isActive = req.body.isActive;
+      }
       if (req.body.address) {
         user.address = { ...user.address, ...req.body.address };
       }
@@ -67,12 +71,28 @@ class AdminController {
   }
   async deleteUser(req, res) {
     try {
-      const deletedUser = await User.findByIdAndDelete(req.params.id);
-      if (!deletedUser)
-        return res.status(404).json({ message: "User not found" });
-      res.status(200).json({ message: "User deleted successfully" });
+      const user = await User.findOne({
+        _id: req.params.id,
+        isActive: true,
+      });
+
+      if (!user) {
+        return res
+          .status(404)
+          .json({ message: "User not found or already deleted" });
+      }
+
+      user.isActive = false;
+      await user.save();
+
+      res.status(200).json({
+        message: "User deactivated successfully",
+        userId: user._id,
+      });
     } catch (error) {
-      res.status(500).json({ message: error.message });
+      res
+        .status(500)
+        .json({ message: "Error deleting user", error: error.message });
     }
   }
 
@@ -129,6 +149,38 @@ class AdminController {
       res.status(200).json({ message: "Order deleted successfully" });
     } catch (error) {
       res.status(500).json({ message: error.message });
+    }
+  }
+
+  async confirmCODPayment(req, res) {
+    try {
+      const { orderId } = req.params;
+
+      const order = await Order.findOne({
+        _id: orderId,
+        paymentMethod: "cod",
+        status: "pending",
+      });
+
+      if (!order) {
+        return res.status(404).json({
+          message: "Order not found or not in pending COD status",
+        });
+      }
+
+      order.status = "paid";
+      order.paidAt = new Date();
+      await order.save();
+
+      res.status(200).json({
+        message: "COD payment confirmed",
+        order,
+      });
+    } catch (err) {
+      res.status(500).json({
+        message: "Error confirming payment",
+        error: err.message,
+      });
     }
   }
 

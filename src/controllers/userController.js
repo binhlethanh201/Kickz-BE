@@ -3,7 +3,7 @@ const bcrypt = require("bcrypt");
 class UserController {
   async getAll(req, res, next) {
     try {
-      const users = await User.find();
+      const users = await User.find({ isActive: true }).select("-password");
       res.status(200).json(users);
     } catch (err) {
       res.status(500).json({ message: "Error", error: err.message });
@@ -12,7 +12,10 @@ class UserController {
   async getProfile(req, res) {
     try {
       const userId = req.user.id;
-      const user = await User.findById(userId).select("-password");
+      const user = await User.findOne({
+        _id: req.user.id,
+        isActive: true,
+      }).select("-password");
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }

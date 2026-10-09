@@ -75,17 +75,25 @@ class AuthController {
   async login(req, res) {
     try {
       const { email, password } = req.body;
-
       const user = await User.findOne({ email });
       if (!user) {
-        return res.status(400).json({ message: "Invalid email or password" });
+        return res
+          .status(400)
+          .json({ message: "Email hoặc mật khẩu không chính xác" });
       }
 
       const isPasswordValid = await bcrypt.compare(password, user.password);
       if (!isPasswordValid) {
-        return res.status(400).json({ message: "Invalid email or password" });
+        return res
+          .status(400)
+          .json({ message: "Email hoặc mật khẩu không chính xác" });
       }
-
+      if (!user.isActive) {
+        return res.status(403).json({
+          message:
+            "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên để biết thêm chi tiết.",
+        });
+      }
       const payload = {
         id: user._id,
         email: user.email,
@@ -115,6 +123,11 @@ class AuthController {
       const user = await User.findById(req.user.id).select("-password");
       if (!user) {
         return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      }
+      if (!user.isActive) {
+        return res
+          .status(403)
+          .json({ message: "Tài khoản của bạn đã bị vô hiệu hóa." });
       }
       res.status(200).json({ user });
     } catch (error) {

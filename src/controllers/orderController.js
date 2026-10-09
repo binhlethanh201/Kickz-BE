@@ -170,8 +170,6 @@ class OrderController {
       const finalPrice = totalPrice - discount + shippingFee;
 
       const payosOrderCode = Number(String(Date.now()).slice(-9));
-      const initialStatus = paymentMethod === "payos" ? "paid" : "pending";
-
       const newOrder = new Order({
         userId,
         orderCode: payosOrderCode,
@@ -183,7 +181,8 @@ class OrderController {
         voucherCode,
         discount,
         totalPrice: finalPrice,
-        status: initialStatus,
+        status: "pending",
+        paidAt: null,
       });
 
       await newOrder.save();
@@ -286,12 +285,19 @@ class OrderController {
     try {
       const webhookData = await payos.webhooks.verify(req.body);
       if (["00", "PAYMENT_SUCCESS"].includes(webhookData.code)) {
-        await Order.findOneAndUpdate(
+        const order = await Order.findOneAndUpdate(
           { orderCode: webhookData.orderCode },
-          { status: "paid" },
+          {
+            status: "paid",
+            paidAt: new Date(),
+          },
+          { new: true },
         );
-      }
 
+        if (order) {
+          console.log(`Order ${order._id} payment confirmed at ${new Date()}`);
+        }
+      }
       res.status(200).json({ success: true });
     } catch (error) {
       console.error("PayOS Webhook Error:", error);
