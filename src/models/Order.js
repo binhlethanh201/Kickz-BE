@@ -51,6 +51,18 @@ const OrderSchema = new schema(
       type: String,
       default: null,
     },
+    refundRequested: {
+      type: Boolean,
+      default: false,
+    },
+    refundRequestedAt: {
+      type: Date,
+      default: null,
+    },
+    refundReason: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true },
 );

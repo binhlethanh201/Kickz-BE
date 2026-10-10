@@ -9,7 +9,7 @@ router.get("/", verifyToken, orderController.getAll);
 router.post("/", verifyToken, orderController.createOrder);
 
 router.get("/detail/:orderId", verifyToken, orderController.getOrderDetail);
-router.put("/:orderId/cancel", verifyToken, orderController.cancelOrder);
+router.post("/:orderId/cancel", verifyToken, orderController.cancelOrder);
 router.put("/:orderId/status", verifyToken, orderController.updateStatus);
 router.delete("/:orderId", verifyToken, orderController.deleteOrder);
 

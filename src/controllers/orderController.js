@@ -234,6 +234,7 @@ class OrderController {
     try {
       const { orderId } = req.params;
       const userId = req.user.id;
+      const { reason } = req.body;
 
       const order = await Order.findOne({ _id: orderId, userId });
 
@@ -245,7 +246,9 @@ class OrderController {
 
       if (!["pending", "paid"].includes(order.status)) {
         return res.status(400).json({
-          message: `Cannot cancel order with status "${order.status}". Only "pending" or "paid" orders can be cancelled.`,
+          message:
+            `Cannot cancel order with status "${order.status}". ` +
+            `Only "pending" or "paid" orders can be cancelled.`,
         });
       }
 
@@ -262,6 +265,15 @@ class OrderController {
 
       const previousStatus = order.status;
       order.status = "cancelled";
+
+      if (previousStatus === "paid") {
+        if (order.paymentMethod === "cod") {
+          order.refundRequested = true;
+          order.refundRequestedAt = new Date();
+          order.refundReason = reason || "User requested cancellation";
+        }
+      }
+
       const updatedOrder = await order.save();
 
       await updatedOrder.populate([
@@ -269,11 +281,35 @@ class OrderController {
       ]);
 
       let message = "Order cancelled successfully";
-      if (previousStatus === "paid") {
-        message = "Order cancelled. Please contact admin for a refund.";
+      let refundInfo = null;
+
+      if (previousStatus === "pending") {
+        message = "Order cancelled successfully. No refund needed.";
+      } else if (previousStatus === "paid") {
+        if (order.paymentMethod === "payos") {
+          message = "Order cancelled. Refund will be processed in 12-24 hours.";
+          refundInfo = {
+            type: "payos",
+            status: "processing",
+            timeline: "12-24 hours",
+          };
+        } else if (order.paymentMethod === "cod") {
+          message =
+            "Cancellation request sent to admin. " +
+            "Refund will be processed within 3-5 business days.";
+          refundInfo = {
+            type: "cod",
+            status: "pending_admin_confirmation",
+            timeline: "3-5 business days",
+          };
+        }
       }
 
-      res.status(200).json({ message, order: updatedOrder });
+      res.status(200).json({
+        message,
+        refundInfo,
+        order: updatedOrder,
+      });
     } catch (err) {
       res
         .status(500)
