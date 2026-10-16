@@ -144,30 +144,59 @@ class OrderController {
         });
       }
 
+      const shippingFee = shippingMethod === "express" ? 20000 : 0;
+      const totalBeforeDiscount = totalPrice + shippingFee;
+
       let discount = 0;
-      if (voucherCode) {
+      let appliedVoucherCode = null;
+
+      if (voucherCode && voucherCode.trim()) {
         const voucher = await Voucher.findOne({
-          code: voucherCode,
-          isActive: true,
-          startDate: { $lte: new Date() },
-          endDate: { $gte: new Date() },
+          code: voucherCode.toUpperCase().trim(),
         });
 
-        if (!voucher) throw new Error("Invalid or expired voucher");
-        if (totalPrice < voucher.minOrderValue) {
-          throw new Error(
-            `Order must be at least ${voucher.minOrderValue} VNĐ to use voucher`,
-          );
+        if (!voucher) {
+          return res.status(400).json({
+            message: "Mã voucher không tồn tại",
+          });
         }
-        discount =
-          voucher.discountType === "percent"
-            ? (totalPrice * voucher.discountValue) / 100
-            : voucher.discountValue;
-        if (discount > totalPrice) discount = totalPrice;
-      }
 
-      const shippingFee = shippingMethod === "express" ? 20000 : 0;
-      const finalPrice = totalPrice - discount + shippingFee;
+        if (!voucher.isActive) {
+          return res.status(400).json({
+            message: "Mã voucher đã bị vô hiệu hóa",
+          });
+        }
+
+        const now = new Date();
+        if (now > voucher.endDate || now < voucher.startDate) {
+          return res.status(400).json({
+            message: "Mã voucher đã hết hạn",
+          });
+        }
+
+        if (totalBeforeDiscount < voucher.minOrderValue) {
+          return res.status(400).json({
+            message: `Đơn hàng phải từ ${voucher.minOrderValue.toLocaleString("vi-VN")} đ để áp dụng voucher này`,
+          });
+        }
+
+        if (voucher.usageLimit && voucher.usedCount >= voucher.usageLimit) {
+          return res.status(400).json({
+            message: "Mã voucher đã hết lượt sử dụng",
+          });
+        }
+
+        if (voucher.discountType === "percent") {
+          discount = Math.floor(
+            (totalBeforeDiscount * voucher.discountValue) / 100,
+          );
+        } else {
+          discount = voucher.discountValue;
+        }
+        discount = Math.min(discount, totalBeforeDiscount);
+        appliedVoucherCode = voucher.code;
+      }
+      const finalPrice = totalBeforeDiscount - discount;
 
       const payosOrderCode = Number(String(Date.now()).slice(-9));
       const newOrder = new Order({
@@ -178,7 +207,7 @@ class OrderController {
         shippingFee,
         address,
         paymentMethod,
-        voucherCode,
+        voucherCode: appliedVoucherCode,
         discount,
         totalPrice: finalPrice,
         status: "pending",
@@ -186,6 +215,12 @@ class OrderController {
       });
 
       await newOrder.save();
+      if (appliedVoucherCode) {
+        await Voucher.findOneAndUpdate(
+          { code: appliedVoucherCode },
+          { $inc: { usedCount: 1 } },
+        );
+      }
 
       if (stockUpdates.length > 0) {
         await Product.bulkWrite(stockUpdates);
@@ -319,8 +354,11 @@ class OrderController {
 
   payosWebhook = async (req, res) => {
     try {
-      const webhookData = await payos.webhooks.verify(req.body);
-      if (["00", "PAYMENT_SUCCESS"].includes(webhookData.code)) {
+      const webhookData = payos.verifyWebhookData(req.body);
+      if (
+        webhookData.code === "00" ||
+        ["00", "PAYMENT_SUCCESS"].includes(req.body.code)
+      ) {
         const order = await Order.findOneAndUpdate(
           { orderCode: webhookData.orderCode },
           {
@@ -331,13 +369,19 @@ class OrderController {
         );
 
         if (order) {
-          console.log(`Order ${order._id} payment confirmed at ${new Date()}`);
+          console.log(
+            `[PayOS Webhook] Đơn hàng ${order._id} đã thanh toán thành công lúc ${new Date()}`,
+          );
+        } else {
+          console.log(
+            `[PayOS Webhook] Không tìm thấy đơn hàng với mã: ${webhookData.orderCode}`,
+          );
         }
       }
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error("PayOS Webhook Error:", error);
-      res.status(400).json({ success: false, message: error.message });
+      console.error("PayOS Webhook Error:", error.message);
+      res.status(200).json({ success: false, message: error.message });
     }
   };
 

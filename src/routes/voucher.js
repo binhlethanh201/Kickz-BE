@@ -4,10 +4,12 @@ const voucherController = require("../controllers/voucherController");
 const verifyToken = require("../middlewares/auth");
 const checkAdmin = require("../middlewares/admin");
 
+router.post("/validate", voucherController.validateVoucher);
+router.get("/active", voucherController.getActiveVouchers);
+router.get("/", voucherController.getAll);
+router.get("/:id", voucherController.getById);
 router.post("/", verifyToken, checkAdmin, voucherController.create);
 router.put("/:id", verifyToken, checkAdmin, voucherController.update);
 router.delete("/:id", verifyToken, checkAdmin, voucherController.delete);
-router.get("/", voucherController.getAll);
-router.get("/:id", voucherController.getById);
 
 module.exports = router;

@@ -26,13 +26,6 @@ router.patch(
   "/orders/:orderId/confirm-payment",
   adminController.confirmCODPayment,
 );
-
-//Vouchers Management
-router.get("/vouchers", AdminController.getAllVouchers);
-router.get("/vouchers/:id", AdminController.getVoucherById);
-router.post("/vouchers", AdminController.createVoucher);
-router.put("/vouchers/:id", AdminController.updateVoucher);
-router.delete("/vouchers/:id", AdminController.deleteVoucher);
 //Products Management
 router.get("/products", AdminController.getAllProducts);
 router.get("/products/:id", AdminController.getProductById);
