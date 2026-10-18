@@ -4,6 +4,7 @@ const AdminController = require("../controllers/adminController");
 const verifyToken = require("../middlewares/auth");
 const checkAdmin = require("../middlewares/admin");
 const adminController = require("../controllers/adminController");
+const refundController = require("../controllers/refundController");
 
 router.use(verifyToken, checkAdmin);
 //Report And Analytics
@@ -26,6 +27,13 @@ router.patch(
   "/orders/:orderId/confirm-payment",
   adminController.confirmCODPayment,
 );
+//Refunds Management
+router.get("/refunds", refundController.adminList);
+router.get("/refunds/:refundId", refundController.adminDetail);
+router.patch("/refunds/:refundId/approve", refundController.approve);
+router.patch("/refunds/:refundId/reject", refundController.reject);
+router.patch("/refunds/:refundId/received", refundController.markReceived);
+router.patch("/refunds/:refundId/refunded", refundController.markRefunded);
 //Products Management
 router.get("/products", AdminController.getAllProducts);
 router.get("/products/:id", AdminController.getProductById);

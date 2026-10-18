@@ -2,6 +2,7 @@ const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Voucher = require("../models/Voucher");
 const Product = require("../models/Product");
+const Refund = require("../models/Refund");
 const mongoose = require("mongoose");
 
 const { PayOS } = require("@payos/node");
@@ -63,11 +64,10 @@ class OrderController {
 
       if (order.paymentMethod === "payos" && order.status === "pending") {
         try {
-          const paymentInfo = await payos.getPaymentLinkInformation(
-            order.orderCode,
-          );
+          const paymentInfo = await payos.paymentRequests.get(order.orderCode);
           if (paymentInfo && paymentInfo.status === "PAID") {
             order.status = "paid";
+            order.paidAt = order.paidAt || new Date();
             await order.save();
           }
         } catch (payosErr) {
@@ -299,13 +299,41 @@ class OrderController {
       }
 
       const previousStatus = order.status;
+      const wasPaid = previousStatus === "paid" && !!order.paidAt;
       order.status = "cancelled";
 
-      if (previousStatus === "paid") {
+      let createdRefund = null;
+      if (wasPaid) {
         if (order.paymentMethod === "cod") {
           order.refundRequested = true;
           order.refundRequestedAt = new Date();
           order.refundReason = reason || "User requested cancellation";
+        }
+        const existingRefund = await Refund.findOne({
+          orderId: order._id,
+          status: { $nin: ["rejected", "refunded", "cancelled"] },
+        });
+        if (!existingRefund) {
+          const approvalDeadline = new Date();
+          approvalDeadline.setDate(approvalDeadline.getDate() + 3);
+          createdRefund = new Refund({
+            orderId: order._id,
+            userId: order.userId,
+            reason: "other",
+            description: reason || "User cancelled paid order",
+            refundAmount: order.totalPrice,
+            approvalDeadlineAt: approvalDeadline,
+            history: [
+              {
+                action: "requested",
+                by: userId,
+                note: reason || "User cancelled paid order",
+              },
+            ],
+          });
+          await createdRefund.save();
+        } else {
+          createdRefund = existingRefund;
         }
       }
 
@@ -318,15 +346,16 @@ class OrderController {
       let message = "Order cancelled successfully";
       let refundInfo = null;
 
-      if (previousStatus === "pending") {
+      if (!wasPaid) {
         message = "Order cancelled successfully. No refund needed.";
-      } else if (previousStatus === "paid") {
+      } else {
         if (order.paymentMethod === "payos") {
           message = "Order cancelled. Refund will be processed in 12-24 hours.";
           refundInfo = {
             type: "payos",
             status: "processing",
             timeline: "12-24 hours",
+            refundId: createdRefund?._id || null,
           };
         } else if (order.paymentMethod === "cod") {
           message =
@@ -336,6 +365,7 @@ class OrderController {
             type: "cod",
             status: "pending_admin_confirmation",
             timeline: "3-5 business days",
+            refundId: createdRefund?._id || null,
           };
         }
       }
@@ -354,11 +384,8 @@ class OrderController {
 
   payosWebhook = async (req, res) => {
     try {
-      const webhookData = payos.verifyWebhookData(req.body);
-      if (
-        webhookData.code === "00" ||
-        ["00", "PAYMENT_SUCCESS"].includes(req.body.code)
-      ) {
+      const webhookData = await payos.webhooks.verify(req.body);
+      if (webhookData.code === "00") {
         const order = await Order.findOneAndUpdate(
           { orderCode: webhookData.orderCode },
           {

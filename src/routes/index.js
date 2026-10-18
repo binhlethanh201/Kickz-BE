@@ -11,6 +11,7 @@ const reviewRouter = require("./review");
 const authRouter = require("./auth");
 const adminRouter = require("./admin");
 const orderRouter = require("./order");
+const cardRouter = require("./card");
 
 router.use("/products", productRouter);
 router.use("/brands", brandRouter);
@@ -23,5 +24,6 @@ router.use("/reviews", reviewRouter);
 router.use("/auth", authRouter);
 router.use("/admin", adminRouter);
 router.use("/orders", orderRouter);
+router.use("/cards", cardRouter);
 
 module.exports = router;
