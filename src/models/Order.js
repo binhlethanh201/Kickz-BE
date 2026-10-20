@@ -25,11 +25,12 @@ const OrderSchema = new schema(
     address: { type: String, required: true },
     paymentMethod: {
       type: String,
-      enum: ["payos", "cod"],
+      enum: ["payos", "cod", "wallet"],
       default: "cod",
     },
     voucherCode: { type: String },
     discount: { type: Number, default: 0 },
+    walletUsed: { type: Number, default: 0 },
     totalPrice: { type: Number, required: true },
     status: {
       type: String,

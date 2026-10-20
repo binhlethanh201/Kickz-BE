@@ -3,6 +3,7 @@ const Cart = require("../models/Cart");
 const Voucher = require("../models/Voucher");
 const Product = require("../models/Product");
 const Refund = require("../models/Refund");
+const Card = require("../models/Card");
 const mongoose = require("mongoose");
 
 const { PayOS } = require("@payos/node");
@@ -94,6 +95,7 @@ class OrderController {
         address,
         paymentMethod,
         voucherCode,
+        isUseWallet,
       } = req.body;
 
       if (!selectedItems || selectedItems.length === 0) {
@@ -196,7 +198,31 @@ class OrderController {
         discount = Math.min(discount, totalBeforeDiscount);
         appliedVoucherCode = voucher.code;
       }
-      const finalPrice = totalBeforeDiscount - discount;
+      let finalPrice = totalBeforeDiscount - discount;
+
+      let walletUsedAmount = 0;
+      let finalPaymentMethod = paymentMethod;
+      let orderStatus = "pending";
+      let paidAtTime = null;
+
+      if (isUseWallet) {
+        const card = await Card.findOne({ userId });
+        if (card && card.balance > 0) {
+          if (card.balance >= finalPrice) {
+            walletUsedAmount = finalPrice;
+            card.balance -= finalPrice;
+            finalPrice = 0;
+            finalPaymentMethod = "wallet";
+            orderStatus = "paid";
+            paidAtTime = new Date();
+          } else {
+            walletUsedAmount = card.balance;
+            finalPrice -= card.balance;
+            card.balance = 0;
+          }
+          await card.save();
+        }
+      }
 
       const payosOrderCode = Number(String(Date.now()).slice(-9));
       const newOrder = new Order({
@@ -206,15 +232,17 @@ class OrderController {
         shippingMethod,
         shippingFee,
         address,
-        paymentMethod,
+        paymentMethod: finalPaymentMethod,
         voucherCode: appliedVoucherCode,
         discount,
+        walletUsed: walletUsedAmount,
         totalPrice: finalPrice,
-        status: "pending",
-        paidAt: null,
+        status: orderStatus,
+        paidAt: paidAtTime,
       });
 
       await newOrder.save();
+
       if (appliedVoucherCode) {
         await Voucher.findOneAndUpdate(
           { code: appliedVoucherCode },
@@ -238,8 +266,7 @@ class OrderController {
       await cart.save();
 
       let checkoutUrl = null;
-
-      if (paymentMethod === "payos") {
+      if (finalPaymentMethod === "payos" && finalPrice > 0) {
         const FRONTEND_URL =
           process.env.FRONTEND_URL || "http://localhost:3000";
         const body = {
