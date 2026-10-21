@@ -4,6 +4,7 @@ const Voucher = require("../models/Voucher");
 const Product = require("../models/Product");
 const Refund = require("../models/Refund");
 const Card = require("../models/Card");
+const User = require("../models/User");
 const mongoose = require("mongoose");
 
 const { PayOS } = require("@payos/node");
@@ -92,11 +93,28 @@ class OrderController {
       const {
         selectedItems,
         shippingMethod,
+        phone,
         address,
         paymentMethod,
         voucherCode,
         isUseWallet,
       } = req.body;
+
+      const user = await User.findById(userId);
+      if (!user) throw new Error("Không tìm thấy thông tin người dùng");
+
+      if (!user.phone) {
+        return res.status(400).json({
+          message:
+            "Vui lòng cập nhật số điện thoại trong hồ sơ trước khi thanh toán.",
+        });
+      }
+      if (!user.address || !user.address.street || !user.address.city) {
+        return res.status(400).json({
+          message:
+            "Vui lòng cập nhật địa chỉ đầy đủ trong hồ sơ trước khi thanh toán.",
+        });
+      }
 
       if (!selectedItems || selectedItems.length === 0) {
         throw new Error("No items selected for checkout");
@@ -231,6 +249,7 @@ class OrderController {
         items: orderItems,
         shippingMethod,
         shippingFee,
+        phone,
         address,
         paymentMethod: finalPaymentMethod,
         voucherCode: appliedVoucherCode,

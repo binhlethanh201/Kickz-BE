@@ -100,7 +100,7 @@ class AdminController {
   async getAllOrders(req, res) {
     try {
       const orders = await Order.find({})
-        .populate("userId", "firstName lastName email")
+        .populate("userId", "firstName lastName email phone")
         .populate("items.productId", "name price")
         .sort({ createdAt: -1 });
       res.status(200).json(orders);
@@ -111,7 +111,7 @@ class AdminController {
   async getOrderById(req, res) {
     try {
       const order = await Order.findById(req.params.id)
-        .populate("userId", "firstName lastName email")
+        .populate("userId", "firstName lastName email phone")
         .populate("items.productId", "name price img brand");
       if (!order) return res.status(404).json({ message: "Order not found" });
       res.status(200).json(order);
