@@ -20,7 +20,7 @@ const REFUND_STATUSES = [
   "cancelled",
 ];
 
-const REFUND_METHODS = ["bank_transfer", "payos_reversal", "cash"];
+const REFUND_METHODS = ["wallet"];
 
 const RefundSchema = new schema(
   {

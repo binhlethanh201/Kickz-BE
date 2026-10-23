@@ -7,7 +7,6 @@ const WithdrawalSchema = new schema(
       type: schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     amount: {
       type: Number,
@@ -34,6 +33,11 @@ const WithdrawalSchema = new schema(
   {
     timestamps: true,
   },
+);
+
+WithdrawalSchema.index(
+  { userId: 1 },
+  { unique: true, partialFilterExpression: { status: "pending" } },
 );
 
 module.exports = mongoose.model("Withdrawal", WithdrawalSchema, "withdrawals");

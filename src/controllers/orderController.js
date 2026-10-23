@@ -348,6 +348,14 @@ class OrderController {
       const wasPaid = previousStatus === "paid" && !!order.paidAt;
       order.status = "cancelled";
 
+      if (!wasPaid && order.walletUsed > 0) {
+        await Card.findOneAndUpdate(
+          { userId: order.userId },
+          { $inc: { balance: order.walletUsed } },
+          { upsert: true },
+        );
+      }
+
       let createdRefund = null;
       if (wasPaid) {
         if (order.paymentMethod === "cod") {
@@ -359,6 +367,7 @@ class OrderController {
           orderId: order._id,
           status: { $nin: ["rejected", "refunded", "cancelled"] },
         });
+
         if (!existingRefund) {
           const approvalDeadline = new Date();
           approvalDeadline.setDate(approvalDeadline.getDate() + 3);
@@ -367,8 +376,9 @@ class OrderController {
             userId: order.userId,
             reason: "other",
             description: reason || "User cancelled paid order",
-            refundAmount: order.totalPrice,
+            refundAmount: order.totalPrice + (order.walletUsed || 0),
             approvalDeadlineAt: approvalDeadline,
+            status: "requested",
             history: [
               {
                 action: "requested",
@@ -396,21 +406,23 @@ class OrderController {
         message = "Order cancelled successfully. No refund needed.";
       } else {
         if (order.paymentMethod === "payos") {
-          message = "Order cancelled. Refund will be processed in 12-24 hours.";
+          message =
+            "Order cancelled. Refund request sent to admin for review. " +
+            "You will receive confirmation within 3 business days.";
           refundInfo = {
             type: "payos",
-            status: "processing",
-            timeline: "12-24 hours",
+            status: "pending_admin_approval",
+            timeline: "3 business days",
             refundId: createdRefund?._id || null,
           };
         } else if (order.paymentMethod === "cod") {
           message =
-            "Cancellation request sent to admin. " +
-            "Refund will be processed within 3-5 business days.";
+            "Order cancelled. Refund request sent to admin for review. " +
+            "You will receive confirmation within 3 business days.";
           refundInfo = {
             type: "cod",
-            status: "pending_admin_confirmation",
-            timeline: "3-5 business days",
+            status: "pending_admin_approval",
+            timeline: "3 business days",
             refundId: createdRefund?._id || null,
           };
         }
@@ -433,11 +445,8 @@ class OrderController {
       const webhookData = await payos.webhooks.verify(req.body);
       if (webhookData.code === "00") {
         const order = await Order.findOneAndUpdate(
-          { orderCode: webhookData.orderCode },
-          {
-            status: "paid",
-            paidAt: new Date(),
-          },
+          { orderCode: webhookData.orderCode, status: "pending" },
+          { status: "paid", paidAt: new Date() },
           { new: true },
         );
 

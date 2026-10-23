@@ -31,12 +31,6 @@ class CardController {
           .json({ message: "Điền đầy đủ thông tin ngân hàng" });
       }
 
-      const card = await Card.findOne({ userId: req.user.id });
-      if (!card || card.balance < amount) {
-        return res.status(400).json({
-          message: `Số dư không đủ (hiện có: ${card?.balance || 0}đ)`,
-        });
-      }
       const pending = await Withdrawal.findOne({
         userId: req.user.id,
         status: "pending",
@@ -49,6 +43,7 @@ class CardController {
       }
       const lastRequest = await Withdrawal.findOne({
         userId: req.user.id,
+        status: { $ne: "rejected" },
       }).sort({ createdAt: -1 });
       if (lastRequest) {
         const hoursSinceLastRequest =
@@ -61,18 +56,39 @@ class CardController {
         }
       }
 
-      const withdrawal = new Withdrawal({
-        userId: req.user.id,
-        amount,
-        bankName,
-        accountName,
-        accountNumber,
-      });
-      await withdrawal.save();
+      let withdrawal;
+      try {
+        withdrawal = await Withdrawal.create({
+          userId: req.user.id,
+          amount,
+          bankName,
+          accountName,
+          accountNumber,
+        });
+      } catch (e) {
+        if (e.code === 11000) {
+          return res.status(400).json({
+            message:
+              "Bạn đang có 1 yêu cầu rút tiền chờ xử lý. Vui lòng đợi hoàn tất.",
+          });
+        }
+        throw e;
+      }
+
+      const card = await Card.findOneAndUpdate(
+        { userId: req.user.id, balance: { $gte: amount } },
+        { $inc: { balance: -amount } },
+        { new: true },
+      );
+      if (!card) {
+        await Withdrawal.deleteOne({ _id: withdrawal._id });
+        return res.status(400).json({ message: "Số dư không đủ" });
+      }
 
       res.status(201).json({
         message: "Yêu cầu rút tiền đã gửi. Vui lòng chờ admin duyệt.",
         withdrawalId: withdrawal._id,
+        balance: card.balance,
       });
     } catch (err) {
       res.status(500).json({ message: "Lỗi server", error: err.message });
@@ -144,23 +160,31 @@ class CardController {
 
   async rejectWithdrawal(req, res) {
     try {
-      const withdrawal = await Withdrawal.findOne({
-        _id: req.params.withdrawalId,
-        status: "pending",
-      });
-
+      const withdrawal = await Withdrawal.findOneAndUpdate(
+        { _id: req.params.withdrawalId, status: "pending" },
+        {
+          $set: {
+            status: "rejected",
+            adminNote: req.body.reason || "",
+            rejectedAt: new Date(),
+          },
+        },
+        { new: true },
+      );
       if (!withdrawal) {
         return res.status(404).json({ message: "Không tìm thấy yêu cầu" });
       }
 
-      withdrawal.status = "rejected";
-      withdrawal.adminNote = req.body.reason || "";
-      withdrawal.rejectedAt = new Date();
-      await withdrawal.save();
+      const card = await Card.findOneAndUpdate(
+        { userId: withdrawal.userId },
+        { $inc: { balance: withdrawal.amount } },
+        { new: true, upsert: true },
+      );
 
       res.json({
         message: "Đã từ chối yêu cầu rút tiền",
         data: withdrawal,
+        cardBalance: card.balance,
       });
     } catch (err) {
       res.status(500).json({ message: "Lỗi server", error: err.message });
@@ -169,32 +193,15 @@ class CardController {
 
   async completeWithdrawal(req, res) {
     try {
-      const withdrawal = await Withdrawal.findOne({
-        _id: req.params.withdrawalId,
-        status: "approved",
-      });
-
+      const withdrawal = await Withdrawal.findOneAndUpdate(
+        { _id: req.params.withdrawalId, status: "approved" },
+        { $set: { status: "completed", completedAt: new Date() } },
+        { new: true },
+      );
       if (!withdrawal) {
         return res.status(404).json({ message: "Không tìm thấy yêu cầu" });
       }
-
-      const card = await Card.findOne({ userId: withdrawal.userId });
-      if (!card || card.balance < withdrawal.amount) {
-        return res.status(400).json({ message: "Số dư không đủ" });
-      }
-
-      card.balance -= withdrawal.amount;
-      await card.save();
-
-      withdrawal.status = "completed";
-      withdrawal.completedAt = new Date();
-      await withdrawal.save();
-
-      res.json({
-        message: "Đã hoàn tất rút tiền",
-        data: withdrawal,
-        cardBalance: card.balance,
-      });
+      res.json({ message: "Đã hoàn tất rút tiền", data: withdrawal });
     } catch (err) {
       res.status(500).json({ message: "Lỗi server", error: err.message });
     }

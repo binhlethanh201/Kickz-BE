@@ -4,8 +4,8 @@ const Product = require("../models/Product");
 const Card = require("../models/Card");
 const ELIGIBLE_STATUSES = ["paid", "processing", "shipped", "completed"];
 const TERMINAL_STATUSES = ["rejected", "refunded", "cancelled"];
+const REFUND_STATUSES = Refund.REFUND_STATUSES;
 const REFUND_REASONS = Refund.REFUND_REASONS;
-const REFUND_METHODS = Refund.REFUND_METHODS;
 const REQUIRE_RETURN = Refund.REQUIRE_RETURN;
 function isValidTrackingCode(code) {
   if (!code) return false;
@@ -14,6 +14,8 @@ function isValidTrackingCode(code) {
 function pushHistory(refund, action, by, note) {
   refund.history.push({ action, by: by || null, note: note || null });
 }
+
+const needsReturn = (refund) => REQUIRE_RETURN.includes(refund.reason);
 
 class RefundController {
   async createRequest(req, res) {
@@ -60,12 +62,22 @@ class RefundController {
         userId,
         reason,
         description: description || null,
-        refundAmount: order.totalPrice,
+        refundAmount: order.totalPrice + (order.walletUsed || 0),
         approvalDeadlineAt: approvalDeadline,
       });
 
       pushHistory(refund, "requested", userId, description || null);
       await refund.save();
+      await Order.updateOne(
+        { _id: orderId },
+        {
+          $set: {
+            refundRequested: true,
+            refundRequestedAt: new Date(),
+            refundReason: reason,
+          },
+        },
+      );
       await refund.populate("orderId", "orderCode totalPrice status");
 
       res.status(201).json({
@@ -150,6 +162,12 @@ class RefundController {
         });
       }
 
+      if (!needsReturn(refund)) {
+        return res.status(400).json({
+          message: "Lý do hoàn tiền này không cần gửi hàng trả về",
+        });
+      }
+
       refund.status = "shipped_back";
       refund.returnTrackingCode = returnTrackingCode;
       refund.returnCarrier = returnCarrier || null;
@@ -185,10 +203,20 @@ class RefundController {
         });
       }
 
+      const order = await Order.findById(refund.orderId);
+      if (order?.status === "cancelled") {
+        return res.status(400).json({
+          message: "Đơn đã hủy, không thể hủy yêu cầu hoàn tiền",
+        });
+      }
+
       refund.status = "cancelled";
       pushHistory(refund, "cancelled", req.user.id, null);
       await refund.save();
-
+      await Order.updateOne(
+        { _id: refund.orderId },
+        { $set: { refundRequested: false } },
+      );
       res.status(200).json({
         message: "Đã hủy yêu cầu hoàn tiền",
         refund,
@@ -323,7 +351,10 @@ class RefundController {
       refund.handledBy = req.user.id;
       pushHistory(refund, "rejected", req.user.id, adminNote);
       await refund.save();
-
+      await Order.updateOne(
+        { _id: refund.orderId },
+        { $set: { refundRequested: false } },
+      );
       res.status(200).json({
         message: "Đã từ chối yêu cầu hoàn tiền",
         refund,
@@ -343,12 +374,13 @@ class RefundController {
 
       const refund = await Refund.findOne({
         _id: req.params.refundId,
-        status: { $in: ["approved", "shipped_back"] },
+        status: "shipped_back",
       });
 
       if (!refund) {
         return res.status(404).json({
-          message: "Yêu cầu chưa ở trạng thái đã duyệt (approved)",
+          message:
+            "Yêu cầu chưa ở trạng thái khách đã gửi hàng về (shipped_back)",
         });
       }
 
@@ -374,97 +406,99 @@ class RefundController {
 
   async markRefunded(req, res) {
     try {
-      const { refundMethod, refundReference, adminNote } = req.body;
-      if (!refundMethod || !REFUND_METHODS.includes(refundMethod)) {
-        return res.status(400).json({
-          message: `Phương thức không hợp lệ. Hợp lệ: ${REFUND_METHODS.join(", ")}`,
-        });
-      }
-      if (refundMethod === "bank_transfer" && !refundReference) {
-        return res.status(400).json({
-          message:
-            "Chuyển khoản ngân hàng cần mã tham chiếu (STK, mã check, mã transaction...)",
-        });
-      }
-
+      const { refundReference, adminNote } = req.body;
       if (refundReference && refundReference.length > 100) {
-        return res.status(400).json({
-          message: "Mã tham chiếu không vượt quá 100 ký tự",
-        });
+        return res
+          .status(400)
+          .json({ message: "Mã tham chiếu không vượt quá 100 ký tự" });
       }
 
-      const refund = await Refund.findOne({
-        _id: req.params.refundId,
-        status: { $in: ["approved", "shipped_back", "received"] },
-      }).populate("orderId");
+      const current = await Refund.findById(req.params.refundId);
+      if (!current) {
+        return res
+          .status(404)
+          .json({ message: "Không tìm thấy yêu cầu hoàn tiền" });
+      }
+      const returnRequired = needsReturn(current);
+      const allowedStatuses = returnRequired ? ["received"] : ["approved"];
+      const $set = {
+        status: "refunded",
+        refundMethod: "wallet",
+        refundReference: refundReference || null,
+        refundedAt: new Date(),
+        handledBy: req.user.id,
+      };
+      if (adminNote) $set.adminNote = adminNote;
+
+      const refund = await Refund.findOneAndUpdate(
+        { _id: current._id, status: { $in: allowedStatuses } },
+        {
+          $set,
+          $push: {
+            history: { action: "refunded", by: req.user.id, note: "wallet" },
+          },
+        },
+        { new: true },
+      );
 
       if (!refund) {
-        return res.status(404).json({
-          message:
-            "Yêu cầu chưa ở trạng thái có thể hoàn tiền (approved/received)",
+        return res.status(409).json({
+          message: returnRequired
+            ? "Yêu cầu phải ở trạng thái đã nhận hàng (received) mới hoàn tiền được"
+            : "Yêu cầu phải ở trạng thái đã duyệt (approved) mới hoàn tiền được",
         });
       }
-      const isPayosOrder = refund.orderId?.paymentMethod === "payos";
-      if (isPayosOrder && refundMethod !== "payos_reversal") {
-        return res.status(400).json({
-          message:
-            "Đơn PayOS chỉ hoàn tiền vào số dư (payos_reversal). Vui lòng chọn hoàn tiền PayOS.",
-        });
-      }
-      if (!isPayosOrder && refundMethod === "payos_reversal") {
-        return res.status(400).json({
-          message:
-            "Đơn COD không hoàn vào số dư. Vui lòng chọn chuyển khoản hoặc tiền mặt.",
-        });
-      }
-      const order = refund.orderId;
-      if (order?.items?.length > 0) {
-        const stockUpdates = order.items.map((item) => ({
-          updateOne: {
-            filter: { _id: item.productId },
-            update: { $inc: { quantity: item.quantity } },
-          },
-        }));
-        await Product.bulkWrite(stockUpdates);
-      }
-      refund.status = "refunded";
-      refund.refundMethod = refundMethod;
-      refund.refundReference = refundReference || null;
-      if (adminNote) refund.adminNote = adminNote;
-      refund.refundedAt = new Date();
-      refund.handledBy = req.user.id;
-      pushHistory(
-        refund,
-        "refunded",
-        req.user.id,
-        `${refundMethod}${refundReference ? ` - ${refundReference}` : ""}`,
-      );
-      await refund.save();
-      let cardBalance = null;
-      if (isPayosOrder) {
-        const card = await Card.findOneAndUpdate(
+      let card;
+      try {
+        card = await Card.findOneAndUpdate(
           { userId: refund.userId },
           { $inc: { balance: refund.refundAmount } },
           { new: true, upsert: true, setDefaultsOnInsert: true },
         );
-        cardBalance = card.balance;
+      } catch (e) {
+        await Refund.updateOne(
+          { _id: refund._id },
+          {
+            $set: {
+              status: current.status,
+              refundMethod: null,
+              refundedAt: null,
+            },
+            $pop: { history: 1 },
+          },
+        );
+        throw e;
       }
-      if (order) {
-        order.status = "cancelled";
-        await order.save();
+      try {
+        const order = await Order.findById(refund.orderId);
+        if (
+          returnRequired &&
+          refund.reason !== "damaged" &&
+          order?.items?.length
+        ) {
+          await Product.bulkWrite(
+            order.items.map((item) => ({
+              updateOne: {
+                filter: { _id: item.productId },
+                update: { $inc: { quantity: item.quantity } },
+              },
+            })),
+          );
+        }
+        await Order.updateOne(
+          { _id: refund.orderId },
+          { $set: { status: "cancelled", refundRequested: false } },
+        );
+      } catch (e) {
+        console.error("Post-refund update failed (refund", refund._id, "):", e);
       }
 
       res.status(200).json({
-        message: isPayosOrder
-          ? "Đã hoàn tiền vào số dư của khách và cập nhật kho"
-          : "Đã hoàn tiền thành công và cập nhật kho",
-        cardBalance,
+        message: "Đã hoàn tiền vào số dư của khách",
+        cardBalance: card.balance,
         refund,
       });
     } catch (err) {
-      if (err.name === "ValidationError") {
-        return res.status(400).json({ message: err.message });
-      }
       console.error("Mark refunded error:", err);
       res.status(500).json({ message: "Lỗi server", error: err.message });
     }
