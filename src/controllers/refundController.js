@@ -203,13 +203,6 @@ class RefundController {
         });
       }
 
-      const order = await Order.findById(refund.orderId);
-      if (order?.status === "cancelled") {
-        return res.status(400).json({
-          message: "Đơn đã hủy, không thể hủy yêu cầu hoàn tiền",
-        });
-      }
-
       refund.status = "cancelled";
       pushHistory(refund, "cancelled", req.user.id, null);
       await refund.save();
@@ -452,7 +445,13 @@ class RefundController {
       try {
         card = await Card.findOneAndUpdate(
           { userId: refund.userId },
-          { $inc: { balance: refund.refundAmount } },
+          {
+            $inc: { balance: refund.refundAmount },
+            $setOnInsert: {
+              cardNumber:
+                "CARD-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+            },
+          },
           { new: true, upsert: true, setDefaultsOnInsert: true },
         );
       } catch (e) {
